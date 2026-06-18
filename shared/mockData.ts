@@ -281,7 +281,8 @@ export const mockEvents: MediaEvent[] = [
     latestReportTime: '2026-06-18T16:00:00Z',
     sentimentShift: true,
     priority: 'critical',
-    description: '公司发布新AI芯片后被第三方实验室质疑性能数据，随后证监会介入问询，舆情从正面迅速转为高风险'
+    description: '公司发布新AI芯片后被第三方实验室质疑性能数据，随后证监会介入问询，舆情从正面迅速转为高风险',
+    escalationReasons: ['存在监管/法律风险报道', '多条负面/风险报道']
   },
   {
     id: 'e2',
@@ -291,7 +292,8 @@ export const mockEvents: MediaEvent[] = [
     latestReportTime: '2026-06-19T08:00:00Z',
     sentimentShift: false,
     priority: 'high',
-    description: '"618"大促期间消费者集中投诉虚假宣传，官方回应被指不完整'
+    description: '"618"大促期间消费者集中投诉虚假宣传，官方回应被指不完整',
+    escalationReasons: ['多条负面/风险报道']
   },
   {
     id: 'e3',
@@ -301,7 +303,8 @@ export const mockEvents: MediaEvent[] = [
     latestReportTime: '2026-06-19T10:00:00Z',
     sentimentShift: false,
     priority: 'critical',
-    description: '多家门店被曝使用过期食材，CEO发布致歉视频但舆情仍在持续发酵'
+    description: '多家门店被曝使用过期食材，CEO发布致歉视频但舆情仍在持续发酵',
+    escalationReasons: ['负面/风险报道占比超50%', '多条负面/风险报道']
   },
   {
     id: 'e4',
@@ -311,7 +314,8 @@ export const mockEvents: MediaEvent[] = [
     latestReportTime: '2026-06-19T09:30:00Z',
     sentimentShift: true,
     priority: 'high',
-    description: '全系降价3-5万引发老车主集体抗议，车企应对沉默导致舆情升级'
+    description: '全系降价3-5万引发老车主集体抗议，车企应对沉默导致舆情升级',
+    escalationReasons: ['多条负面/风险报道']
   },
   {
     id: 'e5',
@@ -321,7 +325,8 @@ export const mockEvents: MediaEvent[] = [
     latestReportTime: '2026-06-14T14:00:00Z',
     sentimentShift: false,
     priority: 'low',
-    description: '正面舆情事件，可用于品牌传播'
+    description: '正面舆情事件，可用于品牌传播',
+    escalationReasons: []
   }
 ];
 
@@ -415,6 +420,11 @@ export const mockDispatches: DispatchRecord[] = [
     status: 'responding',
     statement: '针对媒体报道的食品安全问题，公司高度重视，第一时间成立专项调查组。涉事门店已全部停业整顿，全国门店启动食品安全自查。我们向消费者致以诚挚歉意，并将以实际行动重建信任。详细整改方案将于明日上午对外公布。',
     contacts: ['c4', 'c6', 'c7'],
+    interviewContacts: [
+      { contactId: 'c4', isInterviewTarget: true, commStatus: 'contacted', note: '已约访，待回复' },
+      { contactId: 'c6', isInterviewTarget: true, commStatus: 'pending', note: '' },
+      { contactId: 'c7', isInterviewTarget: false, commStatus: 'responded', note: '已沟通，态度友好' }
+    ],
     followUpNotes: [
       { id: 'fn1', content: '18日晚CEO已发布致歉视频，已同步所有合作媒体', createdAt: '2026-06-18T19:00:00Z' },
       { id: 'fn2', content: '已联系食药监部门，配合调查', createdAt: '2026-06-19T08:00:00Z' },
@@ -433,6 +443,11 @@ export const mockDispatches: DispatchRecord[] = [
     status: 'pending',
     statement: '',
     contacts: ['c1', 'c2', 'c3'],
+    interviewContacts: [
+      { contactId: 'c1', isInterviewTarget: true, commStatus: 'contacted', note: '' },
+      { contactId: 'c2', isInterviewTarget: false, commStatus: 'pending', note: '' },
+      { contactId: 'c3', isInterviewTarget: true, commStatus: 'pending', note: '难沟通，需谨慎' }
+    ],
     followUpNotes: [
       { id: 'fn4', content: '建议法律部先行评估证监会问询函内容', createdAt: '2026-06-17T11:00:00Z' },
       { id: 'fn5', content: '技术部准备芯片实测数据及第三方机构合作方案', createdAt: '2026-06-17T12:30:00Z' }
@@ -450,6 +465,10 @@ export const mockDispatches: DispatchRecord[] = [
     status: 'pending',
     statement: '公司已注意到相关投诉，正在进行系统排查。对部分商品因系统缓存导致的价格显示异常，我们已对受影响用户进行差价补偿，同时优化了优惠券展示规则。其他问题正在核实中。',
     contacts: ['c4', 'c5'],
+    interviewContacts: [
+      { contactId: 'c4', isInterviewTarget: false, commStatus: 'responded', note: '' },
+      { contactId: 'c5', isInterviewTarget: true, commStatus: 'pending', note: '' }
+    ],
     followUpNotes: [
       { id: 'fn6', content: '客服团队已准备统一话术', createdAt: '2026-06-19T08:30:00Z' }
     ],
@@ -466,6 +485,9 @@ export const mockDispatches: DispatchRecord[] = [
     status: 'pending',
     statement: '',
     contacts: ['c8'],
+    interviewContacts: [
+      { contactId: 'c8', isInterviewTarget: true, commStatus: 'pending', note: '' }
+    ],
     followUpNotes: [
       { id: 'fn7', content: '销售部与法务部评估车主补偿方案可行性', createdAt: '2026-06-19T10:00:00Z' },
       { id: 'fn8', content: '监控社交媒体舆情走向，每小时更新一次', createdAt: '2026-06-19T10:15:00Z' }
@@ -483,6 +505,7 @@ export const mockDispatches: DispatchRecord[] = [
     status: 'closed',
     statement: '',
     contacts: [],
+    interviewContacts: [],
     followUpNotes: [
       { id: 'fn9', content: '已转发至品牌传播部，用于官方自媒体和招聘宣传', createdAt: '2026-06-14T15:00:00Z' }
     ],

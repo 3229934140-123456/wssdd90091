@@ -14,6 +14,8 @@ export type EscalationLevel = 'normal' | 'manager' | 'director' | 'executive';
 
 export type RelationshipLevel = 'friendly' | 'neutral' | 'difficult';
 
+export type ContactCommStatus = 'pending' | 'contacted' | 'responded' | 'declined';
+
 export interface KeySentence {
   id: string;
   text: string;
@@ -50,6 +52,14 @@ export interface MediaEvent {
   sentimentShift: boolean;
   priority: EventPriority;
   description?: string;
+  escalationReasons?: string[];
+}
+
+export interface InterviewContact {
+  contactId: string;
+  isInterviewTarget: boolean;
+  commStatus: ContactCommStatus;
+  note?: string;
 }
 
 export interface Contact {
@@ -69,6 +79,7 @@ export interface DispatchRecord {
   status: DispatchStatus;
   statement: string;
   contacts: string[];
+  interviewContacts: InterviewContact[];
   followUpNotes: { id: string; content: string; createdAt: string }[];
   escalationLevel: EscalationLevel;
   createdAt: string;
@@ -76,4 +87,23 @@ export interface DispatchRecord {
   needStatement: boolean;
   needInterview: boolean;
   needEscalation: boolean;
+}
+
+export interface PendingReport {
+  tempId: string;
+  title: string;
+  content: string;
+  summary?: string;
+  url?: string;
+  source: ReportSource;
+  mediaName: string;
+  mediaLevel: MediaLevel;
+  publishTime: string;
+  sentiment: SentimentType;
+  keySentences: KeySentence[];
+  subjects: string[];
+  reachScope: ReachScope;
+  fileName?: string;
+  fileSize?: number;
+  recognizedText?: string;
 }

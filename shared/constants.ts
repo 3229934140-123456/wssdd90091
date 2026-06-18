@@ -1,4 +1,4 @@
-import type { SentimentType, MediaLevel, ReachScope, DispatchStatus, EventPriority, EscalationLevel, RelationshipLevel } from './types';
+import type { SentimentType, MediaLevel, ReachScope, DispatchStatus, EventPriority, EscalationLevel, RelationshipLevel, ContactCommStatus } from './types';
 
 export const SENTIMENT_CONFIG: Record<SentimentType, { label: string; color: string; bgColor: string; borderColor: string; textColor: string }> = {
   positive: { label: '正面', color: '#059669', bgColor: 'bg-emerald-50', borderColor: 'border-emerald-500', textColor: 'text-emerald-700' },
@@ -48,6 +48,13 @@ export const RELATIONSHIP_CONFIG: Record<RelationshipLevel, { label: string; col
   friendly: { label: '友好', color: 'text-emerald-600', icon: 'smile' },
   neutral: { label: '中立', color: 'text-gray-600', icon: 'meh' },
   difficult: { label: '难沟通', color: 'text-red-600', icon: 'frown' }
+};
+
+export const COMM_STATUS_CONFIG: Record<ContactCommStatus, { label: string; color: string; bgColor: string }> = {
+  pending: { label: '待联系', color: 'text-gray-600', bgColor: 'bg-gray-100' },
+  contacted: { label: '已联系', color: 'text-blue-600', bgColor: 'bg-blue-100' },
+  responded: { label: '已回复', color: 'text-emerald-600', bgColor: 'bg-emerald-100' },
+  declined: { label: '拒绝沟通', color: 'text-red-600', bgColor: 'bg-red-100' }
 };
 
 export const VOICE_TYPE_CONFIG: Record<string, { label: string; color: string }> = {

@@ -1,13 +1,15 @@
 import { useState } from 'react';
-import { AlertTriangle, Clock, MessageSquare, Users, Plus, Send, Phone, Mail, Edit3, Save, ChevronRight, Check, X, AlertOctagon, Zap, AlertCircle, FileText, XCircle } from 'lucide-react';
+import { AlertTriangle, Clock, MessageSquare, Users, Plus, Send, Phone, Mail, Edit3, Save, ChevronRight, Check, X, AlertOctagon, Zap, AlertCircle, FileText, XCircle, Target, UserPlus } from 'lucide-react';
 import { useSentimentStore } from '../store/sentimentStore';
-import type { DispatchRecord, DispatchStatus, EscalationLevel } from '../../shared/types';
-import { PRIORITY_CONFIG, DISPATCH_STATUS_CONFIG, ESCALATION_CONFIG, formatFullDateTime, getTimeAgo } from '../../shared/constants';
+import type { DispatchRecord, DispatchStatus, EscalationLevel, ContactCommStatus, RelationshipLevel } from '../../shared/types';
+import { PRIORITY_CONFIG, DISPATCH_STATUS_CONFIG, ESCALATION_CONFIG, COMM_STATUS_CONFIG, RELATIONSHIP_CONFIG, formatFullDateTime, getTimeAgo } from '../../shared/constants';
 import { PriorityBadge, DispatchStatusBadge, RelationshipBadge, SentimentBadge } from '../components/Badges';
 import { useNavigate } from 'react-router-dom';
 
 const statusFlow: DispatchStatus[] = ['pending', 'responding', 'responded', 'closed'];
 const escalationLevels: EscalationLevel[] = ['normal', 'manager', 'director', 'executive'];
+const commStatusOptions: ContactCommStatus[] = ['pending', 'contacted', 'responded', 'declined'];
+const relationshipOptions: RelationshipLevel[] = ['friendly', 'neutral', 'difficult'];
 
 interface QuadrantItem {
   id: string;
@@ -18,6 +20,8 @@ interface QuadrantItem {
   reportCount: number;
   dispatchId?: string;
   status?: DispatchStatus;
+  escalationReasons?: string[];
+  negativeRiskCount?: number;
 }
 
 export default function DispatchPage() {
@@ -35,13 +39,24 @@ export default function DispatchPage() {
   const updateDispatchEscalation = useSentimentStore(s => s.updateDispatchEscalation);
   const bindContactToDispatch = useSentimentStore(s => s.bindContactToDispatch);
   const unbindContactFromDispatch = useSentimentStore(s => s.unbindContactFromDispatch);
+  const setInterviewTarget = useSentimentStore(s => s.setInterviewTarget);
+  const setContactCommStatus = useSentimentStore(s => s.setContactCommStatus);
+  const setContactNote = useSentimentStore(s => s.setContactNote);
+  const addContact = useSentimentStore(s => s.addContact);
+  const syncEventFromReports = useSentimentStore(s => s.syncEventFromReports);
 
   const navigate = useNavigate();
   const [selectedEventId, setSelectedEventId] = useState<string>(events.find(e => e.priority === 'critical')?.id || events[0]?.id);
   const [noteInput, setNoteInput] = useState('');
   const [editingStatement, setEditingStatement] = useState(false);
   const [statementDraft, setStatementDraft] = useState('');
-  const [showContactModal, setShowContactModal] = useState(false);
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [newContactName, setNewContactName] = useState('');
+  const [newContactMedia, setNewContactMedia] = useState('');
+  const [newContactTitle, setNewContactTitle] = useState('');
+  const [newContactPhone, setNewContactPhone] = useState('');
+  const [newContactEmail, setNewContactEmail] = useState('');
+  const [newContactRelationship, setNewContactRelationship] = useState<RelationshipLevel>('neutral');
 
   const selectedEvent = events.find(e => e.id === selectedEventId);
   const selectedDispatch = selectedEvent ? getDispatchByEvent(selectedEvent.id) : undefined;
@@ -49,6 +64,7 @@ export default function DispatchPage() {
 
   const quadrantItems: QuadrantItem[] = events.map(e => {
     const d = getDispatchByEvent(e.id);
+    const reports = getReportsByEvent(e.id);
     const urgent = e.priority === 'critical' || e.priority === 'high';
     const important = e.sentimentShift || e.priority === 'critical';
     return {
@@ -57,9 +73,11 @@ export default function DispatchPage() {
       priority: e.priority,
       urgent,
       important,
-      reportCount: getReportsByEvent(e.id).length,
+      reportCount: reports.length,
       dispatchId: d?.id,
-      status: d?.status
+      status: d?.status,
+      escalationReasons: e.escalationReasons || [],
+      negativeRiskCount: reports.filter(r => r.sentiment === 'negative' || r.sentiment === 'risk').length
     };
   });
 
@@ -81,7 +99,7 @@ export default function DispatchPage() {
       needEscalation: false
     };
     addDispatch(newDispatch);
-    return { ...newDispatch, id: 'temp', createdAt: '', updatedAt: '', followUpNotes: [] };
+    return { ...newDispatch, id: 'temp', createdAt: '', updatedAt: '', followUpNotes: [], interviewContacts: [] };
   };
 
   const handleAddNote = () => {
@@ -125,17 +143,81 @@ export default function DispatchPage() {
     return selectedDispatch?.contacts.includes(contactId) || false;
   };
 
-  const linkedContacts = selectedDispatch?.contacts.map(id => getContactById(id)).filter(Boolean) || [];
+  const handleAddNewContact = () => {
+    if (!newContactName.trim() || !newContactMedia.trim()) return;
+    addContact({
+      name: newContactName.trim(),
+      media: newContactMedia.trim(),
+      title: newContactTitle.trim() || '记者',
+      phone: newContactPhone.trim() || '-',
+      email: newContactEmail.trim() || '-',
+      relationship: newContactRelationship,
+    });
+    if (selectedDispatch) {
+      const latestContact = useSentimentStore.getState().contacts[useSentimentStore.getState().contacts.length - 1];
+      if (latestContact) {
+        bindContactToDispatch(selectedDispatch.id, latestContact.id);
+      }
+    }
+    setNewContactName('');
+    setNewContactMedia('');
+    setNewContactTitle('');
+    setNewContactPhone('');
+    setNewContactEmail('');
+    setNewContactRelationship('neutral');
+    setShowAddContact(false);
+  };
+
+  const handleSyncEvent = () => {
+    if (selectedEventId) {
+      syncEventFromReports(selectedEventId);
+    }
+  };
+
+  const linkedContacts = selectedDispatch?.interviewContacts
+    .map(ic => ({ ...ic, contact: getContactById(ic.contactId) }))
+    .filter(ic => ic.contact) || [];
+
+  const interviewTargets = linkedContacts.filter(ic => ic.isInterviewTarget);
   const unboundContacts = contacts.filter(c => !isContactBound(c.id));
+
+  const renderQuadrantItem = (item: QuadrantItem) => (
+    <div
+      key={item.id}
+      onClick={() => setSelectedEventId(item.id)}
+      className={`text-xs p-2 rounded-sm cursor-pointer transition-colors ${selectedEventId === item.id ? 'bg-white shadow-sm border border-navy-300' : 'bg-white/60 hover:bg-white'}`}
+    >
+      <div className="flex items-center gap-1.5 mb-0.5">
+        <span className={`w-1.5 h-1.5 rounded-full ${item.priority === 'critical' ? 'bg-red-500 animate-pulse' : item.priority === 'high' ? 'bg-amber-500' : item.priority === 'medium' ? 'bg-blue-500' : 'bg-gray-400'}`} />
+        <span className="truncate flex-1 font-medium text-gray-700">{item.name}</span>
+      </div>
+      <div className="flex items-center gap-2 text-[10px] text-gray-500">
+        <span>{item.reportCount}篇</span>
+        {(item.negativeRiskCount || 0) > 0 && <span className="text-red-500">· {item.negativeRiskCount}条负面/风险</span>}
+        {item.status && <span>· {DISPATCH_STATUS_CONFIG[item.status].label}</span>}
+      </div>
+      {item.escalationReasons.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-0.5">
+          {item.escalationReasons.slice(0, 2).map((r, i) => (
+            <span key={i} className="px-1 py-0.5 text-[9px] bg-red-50 text-red-600 border border-red-100 rounded-sm">{r}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="p-6">
       <div className="mb-6 flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-serif font-bold text-gray-900">处置记录</h1>
-          <p className="text-sm text-gray-500 mt-1">晨会快速研判、回应口径管理、全流程状态跟踪</p>
+          <p className="text-sm text-gray-500 mt-1">晨会快速研判、约访清单、回应口径管理、全流程状态跟踪</p>
         </div>
         <div className="flex items-center gap-3">
+          <button onClick={handleSyncEvent} className="btn-ghost text-xs">
+            <Zap className="w-3.5 h-3.5 mr-1" />
+            同步优先级
+          </button>
           <div className="text-right">
             <p className="text-xs text-gray-500">今日待处置</p>
             <p className="text-xl font-mono font-bold text-red-600">{dispatches.filter(d => d.status === 'pending' || d.status === 'responding').length}</p>
@@ -174,22 +256,7 @@ export default function DispatchPage() {
                       {q.items.length === 0 ? (
                         <p className="text-xs text-gray-400 italic">暂无</p>
                       ) : (
-                        q.items.map(item => (
-                          <div
-                            key={item.id}
-                            onClick={() => setSelectedEventId(item.id)}
-                            className={`text-xs p-2 rounded-sm cursor-pointer transition-colors ${selectedEventId === item.id ? 'bg-white shadow-sm border border-navy-300' : 'bg-white/60 hover:bg-white'}`}
-                          >
-                            <div className="flex items-center gap-1.5 mb-0.5">
-                              <span className={`w-1.5 h-1.5 rounded-full ${item.priority === 'critical' ? 'bg-red-500 animate-pulse' : item.priority === 'high' ? 'bg-amber-500' : item.priority === 'medium' ? 'bg-blue-500' : 'bg-gray-400'}`} />
-                              <span className="truncate flex-1 font-medium text-gray-700">{item.name}</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-[10px] text-gray-500">
-                              <span>{item.reportCount}篇</span>
-                              {item.status && <span>· {DISPATCH_STATUS_CONFIG[item.status].label}</span>}
-                            </div>
-                          </div>
-                        ))
+                        q.items.map(item => renderQuadrantItem(item))
                       )}
                     </div>
                   </div>
@@ -199,15 +266,49 @@ export default function DispatchPage() {
           </div>
 
           <div className="card p-5">
-            <h2 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
-              <Users className="w-4 h-4" strokeWidth={1.8} />
-              媒体联系人
-              {selectedDispatch && selectedDispatch.contacts.length > 0 && (
-                <span className="ml-auto inline-flex items-center px-2 py-0.5 text-xs font-medium bg-navy-100 text-navy-700 rounded-sm">
-                  已绑定 {selectedDispatch.contacts.length}
-                </span>
-              )}
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                <Users className="w-4 h-4" strokeWidth={1.8} />
+                媒体联系人
+                {selectedDispatch && selectedDispatch.interviewContacts.length > 0 && (
+                  <span className="ml-auto inline-flex items-center px-2 py-0.5 text-xs font-medium bg-navy-100 text-navy-700 rounded-sm">
+                    已绑定 {selectedDispatch.interviewContacts.length}
+                  </span>
+                )}
+              </h2>
+              <button
+                onClick={() => setShowAddContact(!showAddContact)}
+                className="p-1 text-gray-400 hover:text-navy-600 rounded-sm transition-colors"
+                title="新增联系人"
+              >
+                <UserPlus className="w-4 h-4" />
+              </button>
+            </div>
+
+            {showAddContact && (
+              <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-sm animate-fade-in">
+                <p className="text-xs font-medium text-gray-600 mb-2">新增联系人</p>
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <input type="text" value={newContactName} onChange={e => setNewContactName(e.target.value)} placeholder="姓名 *" className="input-field text-xs py-1" />
+                  <input type="text" value={newContactMedia} onChange={e => setNewContactMedia(e.target.value)} placeholder="媒体 *" className="input-field text-xs py-1" />
+                  <input type="text" value={newContactTitle} onChange={e => setNewContactTitle(e.target.value)} placeholder="职位" className="input-field text-xs py-1" />
+                  <input type="text" value={newContactPhone} onChange={e => setNewContactPhone(e.target.value)} placeholder="电话" className="input-field text-xs py-1" />
+                  <input type="text" value={newContactEmail} onChange={e => setNewContactEmail(e.target.value)} placeholder="邮箱" className="input-field text-xs py-1" />
+                  <select value={newContactRelationship} onChange={e => setNewContactRelationship(e.target.value as RelationshipLevel)} className="select-field text-xs py-1">
+                    {relationshipOptions.map(opt => (
+                      <option key={opt} value={opt}>{RELATIONSHIP_CONFIG[opt].label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setShowAddContact(false)} className="btn-ghost text-xs py-1 px-2">取消</button>
+                  <button onClick={handleAddNewContact} disabled={!newContactName.trim() || !newContactMedia.trim()} className="btn-primary text-xs py-1 px-2 disabled:opacity-50">
+                    <Check className="w-3 h-3 mr-1" />添加并绑定
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-2 mb-3 max-h-60 overflow-y-auto">
               {contacts.map(c => {
                 const bound = isContactBound(c.id);
@@ -230,11 +331,8 @@ export default function DispatchPage() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (bound) {
-                            handleUnbindContact(c.id);
-                          } else {
-                            handleBindContact(c.id);
-                          }
+                          if (bound) handleUnbindContact(c.id);
+                          else handleBindContact(c.id);
                         }}
                         className={`p-1.5 rounded-sm transition-colors ${bound ? 'text-red-500 hover:bg-red-100' : 'text-emerald-500 hover:bg-emerald-100'}`}
                         title={bound ? '解绑' : '绑定到此事件'}
@@ -244,18 +342,11 @@ export default function DispatchPage() {
                       <a href={`tel:${c.phone}`} className="p-1.5 text-gray-400 hover:text-navy-600 hover:bg-gray-100 rounded-sm transition-colors">
                         <Phone className="w-3.5 h-3.5" />
                       </a>
-                      <a href={`mailto:${c.email}`} className="p-1.5 text-gray-400 hover:text-navy-600 hover:bg-gray-100 rounded-sm transition-colors">
-                        <Mail className="w-3.5 h-3.5" />
-                      </a>
                     </div>
                   </div>
                 );
               })}
             </div>
-            <button className="w-full btn-secondary text-xs py-1.5">
-              <Plus className="w-3.5 h-3.5 mr-1" />
-              添加联系人
-            </button>
           </div>
         </div>
 
@@ -273,36 +364,87 @@ export default function DispatchPage() {
                       <p className="text-xs text-gray-500">{selectedEvent.description}</p>
                     )}
                   </div>
-                  <button
-                    onClick={() => navigate('/analysis')}
-                    className="btn-ghost text-xs"
-                  >
-                    查看时间线
-                    <ChevronRight className="w-3.5 h-3.5" />
+                  <button onClick={() => navigate('/analysis')} className="btn-ghost text-xs">
+                    查看时间线 <ChevronRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
+
+                {(selectedEvent.escalationReasons?.length || 0) > 0 && (
+                  <div className="mb-5 p-3 bg-red-50 border border-red-100 rounded-sm">
+                    <p className="text-xs font-semibold text-red-700 mb-2 flex items-center gap-1.5">
+                      <AlertOctagon className="w-3.5 h-3.5" />
+                      升级原因（为什么需要升级处理）
+                    </p>
+                    <div className="space-y-1">
+                      {selectedEvent.escalationReasons?.map((reason, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs text-red-600">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                          {reason}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {linkedContacts.length > 0 && (
                   <div className="mb-5 p-3 bg-emerald-50 border border-emerald-100 rounded-sm">
                     <p className="text-xs font-semibold text-emerald-700 mb-2 flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5" />
-                      本次处置需联络的联系人 ({linkedContacts.length})
+                      <Target className="w-3.5 h-3.5" />
+                      晨会约访清单 ({linkedContacts.length}人)
+                      {interviewTargets.length > 0 && (
+                        <span className="text-amber-600 font-normal ml-2">· {interviewTargets.length}人标记为约访目标</span>
+                      )}
                     </p>
-                    <div className="flex flex-wrap gap-2">
-                      {linkedContacts.map(c => c && (
-                        <div key={c.id} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-emerald-200 rounded-sm">
-                          <span className="w-5 h-5 bg-emerald-500 text-white text-xs rounded-sm flex items-center justify-center font-medium">{c.name[0]}</span>
-                          <span className="text-xs font-medium text-gray-700">{c.name}</span>
-                          <span className="text-[10px] text-gray-400">· {c.media}</span>
-                          <button
-                            onClick={() => handleUnbindContact(c.id)}
-                            className="ml-0.5 p-0.5 text-gray-400 hover:text-red-500 transition-colors"
-                            title="移除"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ))}
+                    <div className="space-y-2">
+                      {linkedContacts.map(ic => {
+                        const c = ic.contact!;
+                        const commConfig = COMM_STATUS_CONFIG[ic.commStatus];
+                        return (
+                          <div key={ic.contactId} className="flex items-center gap-2 p-2 bg-white border border-emerald-200 rounded-sm">
+                            <div className={`w-7 h-7 rounded-sm flex items-center justify-center text-xs font-medium shrink-0 ${ic.isInterviewTarget ? 'bg-amber-500 text-white' : 'bg-emerald-500 text-white'}`}>
+                              {c.name[0]}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-medium text-gray-700">{c.name}</span>
+                                <span className="text-[10px] text-gray-400">{c.media}</span>
+                                {ic.isInterviewTarget && (
+                                  <span className="inline-flex items-center gap-0.5 px-1 py-0.5 text-[9px] bg-amber-100 text-amber-700 rounded-sm font-medium">
+                                    <Target className="w-2.5 h-2.5" />约访目标
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <select
+                              value={ic.commStatus}
+                              onChange={e => {
+                                if (selectedDispatch) setContactCommStatus(selectedDispatch.id, ic.contactId, e.target.value as ContactCommStatus);
+                              }}
+                              className={`text-[10px] px-1.5 py-0.5 rounded-sm border ${commConfig.color} ${commConfig.bgColor} border-current cursor-pointer`}
+                            >
+                              {commStatusOptions.map(s => (
+                                <option key={s} value={s}>{COMM_STATUS_CONFIG[s].label}</option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => {
+                                if (selectedDispatch) setInterviewTarget(selectedDispatch.id, ic.contactId, !ic.isInterviewTarget);
+                              }}
+                              className={`p-1 rounded-sm transition-colors ${ic.isInterviewTarget ? 'text-amber-500 hover:bg-amber-100' : 'text-gray-400 hover:bg-gray-100'}`}
+                              title={ic.isInterviewTarget ? '取消约访标记' : '标记为约访目标'}
+                            >
+                              <Target className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleUnbindContact(ic.contactId)}
+                              className="p-0.5 text-gray-400 hover:text-red-500 transition-colors"
+                              title="移除"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -311,7 +453,7 @@ export default function DispatchPage() {
                   <div className="mb-5">
                     <label className="block text-xs font-medium text-gray-600 mb-2">快速绑定联系人</label>
                     <div className="flex flex-wrap gap-1.5">
-                      {unboundContacts.slice(0, 6).map(c => (
+                      {unboundContacts.slice(0, 8).map(c => (
                         <button
                           key={c.id}
                           onClick={() => handleBindContact(c.id)}
@@ -432,12 +574,10 @@ export default function DispatchPage() {
                   ) : (
                     <div className="flex gap-1.5">
                       <button onClick={() => setEditingStatement(false)} className="btn-ghost text-xs">
-                        <X className="w-3.5 h-3.5 mr-1" />
-                        取消
+                        <X className="w-3.5 h-3.5 mr-1" />取消
                       </button>
                       <button onClick={handleSaveStatement} className="btn-primary text-xs py-1 px-3">
-                        <Save className="w-3.5 h-3.5 mr-1" />
-                        保存
+                        <Save className="w-3.5 h-3.5 mr-1" />保存
                       </button>
                     </div>
                   )}
@@ -447,7 +587,7 @@ export default function DispatchPage() {
                     value={statementDraft}
                     onChange={(e) => setStatementDraft(e.target.value)}
                     rows={5}
-                    placeholder="在此起草官方回应口径...建议包含：事实陈述、公司态度、整改措施、联系方式"
+                    placeholder="在此起草官方回应口径..."
                     className="textarea-field text-sm leading-relaxed"
                   />
                 ) : (
@@ -463,8 +603,7 @@ export default function DispatchPage() {
                   <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
                     <span>最后更新：{formatFullDateTime(selectedDispatch.updatedAt)}</span>
                     <span className="inline-flex items-center gap-1 text-emerald-600">
-                      <Check className="w-3 h-3" />
-                      口径已确认
+                      <Check className="w-3 h-3" />口径已确认
                     </span>
                   </div>
                 )}
@@ -484,9 +623,7 @@ export default function DispatchPage() {
                   ) : (
                     [...selectedDispatch.followUpNotes].reverse().map((note, idx) => (
                       <div key={note.id} className="flex gap-3 animate-fade-in" style={{ animationDelay: `${idx * 40}ms` }}>
-                        <div className="w-7 h-7 rounded-full bg-navy-100 flex items-center justify-center text-navy-700 text-xs font-medium shrink-0">
-                          王
-                        </div>
+                        <div className="w-7 h-7 rounded-full bg-navy-100 flex items-center justify-center text-navy-700 text-xs font-medium shrink-0">王</div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-gray-700">{note.content}</p>
                           <p className="text-xs text-gray-400 mt-0.5 font-mono">{formatFullDateTime(note.createdAt)}</p>
