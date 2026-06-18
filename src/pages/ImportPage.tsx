@@ -1,5 +1,5 @@
 import { useState, useRef, ChangeEvent } from 'react';
-import { Link, Upload, List, FileUp, Sparkles, Filter, TrendingUp, AlertTriangle, HelpCircle, ShieldAlert, CheckCircle2, FileText, CheckCircle, XCircle, AlertCircle, Edit3, Save, X, ChevronDown, ChevronUp, Eye, Plus, FolderOpen } from 'lucide-react';
+import { Link, Upload, List, FileUp, Sparkles, Filter, TrendingUp, AlertTriangle, HelpCircle, ShieldAlert, CheckCircle2, FileText, CheckCircle, XCircle, AlertCircle, Edit3, Save, X, ChevronDown, ChevronUp, Eye, Plus, FolderOpen, Clock } from 'lucide-react';
 import ReportCard from '../components/ReportCard';
 import { useSentimentStore } from '../store/sentimentStore';
 import { analyzeReport, analyzeUrlReport, analyzeFile, FileImportResult } from '../utils/analyzer';
@@ -7,6 +7,15 @@ import { SENTIMENT_CONFIG, MEDIA_LEVEL_CONFIG, REACH_SCOPE_CONFIG } from '../../
 import type { SentimentType, MediaLevel, ReachScope, PendingReport, Report } from '../../shared/types';
 
 type ImportTab = 'url' | 'file' | 'batch';
+type BatchItemStatus = 'new' | 'in_pending' | 'in_store' | 'invalid';
+
+interface BatchImportItem {
+  url: string;
+  status: BatchItemStatus;
+  reportId?: string;
+  reportTitle?: string;
+  errorMsg?: string;
+}
 
 const tabs: { key: ImportTab; label: string; icon: typeof Link; desc: string }[] = [
   { key: 'url', label: '链接导入', icon: Link, desc: '粘贴新闻URL，系统自动提取来源信息' },
@@ -22,6 +31,7 @@ function PendingReportCard({
   onRemove,
   index,
   events,
+  eventDetails,
   onNewEvent,
 }: {
   report: PendingReport;
@@ -29,6 +39,7 @@ function PendingReportCard({
   onRemove: (tempId: string) => void;
   index: number;
   events: { id: string; name: string }[];
+  eventDetails?: { reportCount: number; negativeRiskCount: number; escalationReasons: string[] };
   onNewEvent: (tempId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
@@ -140,6 +151,32 @@ function PendingReportCard({
               </button>
             </div>
 
+            {eventDetails && (
+              <div className="mt-2 ml-5.5 pl-5.5 border-l-2 border-navy-200 bg-navy-50/50 p-2 rounded-r-sm">
+                <div className="flex items-center gap-3 text-[11px] mb-1.5">
+                  <span className="text-gray-600">
+                    <FileText className="w-3 h-3 inline mr-1 opacity-60" />
+                    {eventDetails.reportCount} 篇报道
+                  </span>
+                  {eventDetails.negativeRiskCount > 0 && (
+                    <span className="text-red-600 font-medium">
+                      <AlertTriangle className="w-3 h-3 inline mr-1" />
+                      {eventDetails.negativeRiskCount} 条负面/风险
+                    </span>
+                  )}
+                </div>
+                {eventDetails.escalationReasons.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {eventDetails.escalationReasons.slice(0, 2).map((r, i) => (
+                      <span key={i} className="px-1.5 py-0.5 text-[10px] bg-red-50 text-red-600 border border-red-200 rounded-sm">
+                        {r}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {editing && (
               <div className="mt-3 p-3 bg-white border border-gray-200 rounded-sm animate-fade-in">
                 <div className="space-y-3">
@@ -249,12 +286,18 @@ export default function ImportPage() {
   const [pendingReports, setPendingReports] = useState<PendingReport[]>([]);
   const [duplicateWarnings, setDuplicateWarnings] = useState<{ url: string; reportId: string; title: string }[]>([]);
   const [importAreaWarnings, setImportAreaWarnings] = useState<{ url: string; reportId: string; title: string }[]>([]);
+  const [batchItems, setBatchItems] = useState<BatchImportItem[]>([]);
   const [fileAnalyzeProgress, setFileAnalyzeProgress] = useState<number>(0);
   const [showNewEventDialog, setShowNewEventDialog] = useState<string | null>(null);
   const [newEventName, setNewEventName] = useState('');
+  const [importSummary, setImportSummary] = useState<{
+    totalAdded: number;
+    eventsUpdated: { eventId: string; eventName: string; addedCount: number; reportCount: number; negativeRiskCount: number; escalationReasons: string[] }[];
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const reports = useSentimentStore(s => s.reports);
   const events = useSentimentStore(s => s.events);
+  const getReportsByEvent = useSentimentStore(s => s.getReportsByEvent);
   const addReport = useSentimentStore(s => s.addReport);
   const addReports = useSentimentStore(s => s.addReports);
   const findReportByUrl = useSentimentStore(s => s.findReportByUrl);
@@ -264,6 +307,17 @@ export default function ImportPage() {
   const setSelectedReport = useSentimentStore(s => s.setSelectedReport);
 
   const eventOptions = events.map(e => ({ id: e.id, name: e.name }));
+
+  const getEventDetail = (eventId: string) => {
+    const ev = events.find(e => e.id === eventId);
+    if (!ev) return undefined;
+    const evReports = getReportsByEvent(eventId);
+    return {
+      reportCount: evReports.length,
+      negativeRiskCount: evReports.filter(r => r.sentiment === 'negative' || r.sentiment === 'risk').length,
+      escalationReasons: ev.escalationReasons || []
+    };
+  };
 
   const sortedReports = [...reports].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const filteredReports = filterSentiment === 'all' ? sortedReports : sortedReports.filter(r => r.sentiment === filterSentiment);
@@ -286,6 +340,15 @@ export default function ImportPage() {
     return { inStore, inPending };
   };
 
+  const validateUrl = (url: string): boolean => {
+    try {
+      new URL(url);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const handleUrlImport = () => {
     if (!urlInput.trim()) return;
     setIsAnalyzing(true);
@@ -293,25 +356,34 @@ export default function ImportPage() {
       const urls = urlInput.split(/\n+/).filter(u => u.trim());
       const newPending: PendingReport[] = [];
       const warnings: { url: string; reportId: string; title: string }[] = [];
-      const importWarnings: { url: string; reportId: string; title: string }[] = [];
+      const items: BatchImportItem[] = [];
 
       for (const rawUrl of urls) {
         const url = rawUrl.trim();
+        if (!url) continue;
+
+        if (!validateUrl(url)) {
+          items.push({ url, status: 'invalid', errorMsg: '格式不正确' });
+          continue;
+        }
+
         const { inStore, inPending } = checkUrlDuplicate(url);
         if (inStore) {
-          const w = { url, reportId: inStore.id, title: inStore.title };
-          warnings.push(w);
-          importWarnings.push(w);
+          items.push({ url, status: 'in_store', reportId: inStore.id, reportTitle: inStore.title });
+          warnings.push({ url, reportId: inStore.id, title: inStore.title });
         } else if (inPending) {
-          importWarnings.push({ url, reportId: '', title: '已在待确认列表中' });
+          items.push({ url, status: 'in_pending' });
         } else {
-          newPending.push(analyzeUrlReport(url));
+          const analyzed = analyzeUrlReport(url);
+          newPending.push(analyzed);
+          items.push({ url, status: 'new', reportTitle: analyzed.title });
         }
       }
 
+      setBatchItems(items);
       setPendingReports(prev => [...prev, ...newPending]);
       setDuplicateWarnings(warnings);
-      setImportAreaWarnings(importWarnings);
+      setImportAreaWarnings(warnings);
       setUrlInput('');
       setIsAnalyzing(false);
     }, 800);
@@ -391,8 +463,7 @@ export default function ImportPage() {
     addReports(reportsWithEvent);
 
     const affectedEventIds = new Set<string>();
-    const state = useSentimentStore.getState();
-    const allReports = state.reports;
+    const eventAddCounts = new Map<string, number>();
 
     setTimeout(() => {
       const latestReports = useSentimentStore.getState().reports;
@@ -402,33 +473,60 @@ export default function ImportPage() {
         if (pending.eventId && newlyAdded[i]) {
           addReportToEvent(pending.eventId, newlyAdded[i].id);
           affectedEventIds.add(pending.eventId);
+          eventAddCounts.set(pending.eventId, (eventAddCounts.get(pending.eventId) || 0) + 1);
         }
       });
 
       affectedEventIds.forEach(eventId => {
         syncEventFromReports(eventId);
       });
+
+      setTimeout(() => {
+        const state = useSentimentStore.getState();
+        const eventsUpdated = Array.from(affectedEventIds).map(eventId => {
+          const ev = state.events.find((e: any) => e.id === eventId);
+          const evReports = state.reports.filter((r: any) => r.eventId === eventId);
+          return {
+            eventId,
+            eventName: ev?.name || '未知事件',
+            addedCount: eventAddCounts.get(eventId) || 0,
+            reportCount: evReports.length,
+            negativeRiskCount: evReports.filter((r: any) => r.sentiment === 'negative' || r.sentiment === 'risk').length,
+            escalationReasons: ev?.escalationReasons || []
+          };
+        });
+
+        setImportSummary({
+          totalAdded: pendingReports.length,
+          eventsUpdated
+        });
+      }, 100);
     }, 50);
 
     setPendingReports([]);
     setDuplicateWarnings([]);
     setImportAreaWarnings([]);
+    setBatchItems([]);
   };
 
   const clearPendingReports = () => {
     setPendingReports([]);
     setDuplicateWarnings([]);
     setImportAreaWarnings([]);
+    setBatchItems([]);
   };
 
   const scrollToReport = (reportId: string) => {
+    setFilterSentiment('all');
     setSelectedReport(reportId);
-    const el = document.getElementById(`report-${reportId}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      el.classList.add('animate-pulse-border');
-      setTimeout(() => el.classList.remove('animate-pulse-border'), 3000);
-    }
+    setTimeout(() => {
+      const el = document.getElementById(`report-${reportId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('animate-pulse-border');
+        setTimeout(() => el.classList.remove('animate-pulse-border'), 3000);
+      }
+    }, 50);
   };
 
   const filterOptions: { key: SentimentType | 'all'; label: string; icon?: typeof Filter }[] = [
@@ -528,6 +626,7 @@ export default function ImportPage() {
                 onUpdate={updatePendingReport}
                 onRemove={removePendingReport}
                 events={eventOptions}
+                eventDetails={report.eventId ? getEventDetail(report.eventId) : undefined}
                 onNewEvent={handleNewEventForPending}
               />
             ))}
@@ -552,6 +651,62 @@ export default function ImportPage() {
               <button onClick={() => setShowNewEventDialog(null)} className="btn-ghost text-xs py-1 px-3">取消</button>
               <button onClick={confirmNewEvent} disabled={!newEventName.trim()} className="btn-primary text-xs py-1 px-3 disabled:opacity-50">
                 <Plus className="w-3 h-3 mr-1" />创建并关联
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {importSummary && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setImportSummary(null)}>
+          <div className="bg-white rounded-lg p-5 w-[480px] shadow-xl animate-fade-in max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">入库完成</h3>
+                <p className="text-xs text-gray-500">本次共入库 {importSummary.totalAdded} 篇报道</p>
+              </div>
+            </div>
+
+            {importSummary.eventsUpdated.length > 0 && (
+              <div className="mb-4">
+                <p className="text-xs font-medium text-gray-600 mb-2 flex items-center gap-1">
+                  <TrendingUp className="w-3.5 h-3.5 text-navy-600" />
+                  已更新的事件 ({importSummary.eventsUpdated.length})
+                </p>
+                <div className="space-y-2">
+                  {importSummary.eventsUpdated.map(ev => (
+                    <div key={ev.eventId} className="p-3 bg-navy-50/50 border border-navy-100 rounded-sm">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-semibold text-gray-800">{ev.eventName}</span>
+                        <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-sm">+{ev.addedCount} 篇</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] text-gray-500 mb-1.5">
+                        <span>共 {ev.reportCount} 篇报道</span>
+                        {ev.negativeRiskCount > 0 && (
+                          <span className="text-red-500 font-medium">{ev.negativeRiskCount} 条负面/风险</span>
+                        )}
+                      </div>
+                      {ev.escalationReasons.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {ev.escalationReasons.slice(0, 3).map((r, i) => (
+                            <span key={i} className="px-1.5 py-0.5 text-[10px] bg-red-50 text-red-600 border border-red-200 rounded-sm">
+                              {r}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <button onClick={() => setImportSummary(null)} className="btn-primary text-xs py-1.5 px-4">
+                知道了
               </button>
             </div>
           </div>
@@ -590,7 +745,7 @@ export default function ImportPage() {
                   <label className="block text-xs font-medium text-gray-600 mb-2">新闻链接</label>
                   <textarea
                     value={urlInput}
-                    onChange={(e) => { setUrlInput(e.target.value); setImportAreaWarnings([]); }}
+                    onChange={(e) => { setUrlInput(e.target.value); setImportAreaWarnings([]); setBatchItems([]); }}
                     placeholder="粘贴新闻URL，支持一行一条批量导入..."
                     rows={5}
                     className="textarea-field font-mono text-xs"
@@ -614,6 +769,69 @@ export default function ImportPage() {
                             )}
                           </div>
                         ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {batchItems.length > 0 && (
+                    <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded-sm">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs font-semibold text-gray-700 flex items-center gap-1">
+                          <List className="w-3.5 h-3.5" />
+                          本批次导入结果
+                        </p>
+                        <div className="flex items-center gap-2 text-[10px]">
+                          <span className="inline-flex items-center gap-1 text-emerald-600">
+                            <CheckCircle2 className="w-3 h-3" />
+                            新增 {batchItems.filter(i => i.status === 'new').length}
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-amber-600">
+                            <Clock className="w-3 h-3" />
+                            待确认 {batchItems.filter(i => i.status === 'in_pending').length}
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-gray-500">
+                            <CheckCircle className="w-3 h-3" />
+                            已入库 {batchItems.filter(i => i.status === 'in_store').length}
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-red-500">
+                            <XCircle className="w-3 h-3" />
+                            异常 {batchItems.filter(i => i.status === 'invalid').length}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="space-y-1 max-h-48 overflow-y-auto">
+                        {batchItems.map((item, i) => {
+                          const statusConfig = {
+                            new: { label: '新增', color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-200', icon: CheckCircle2 },
+                            in_pending: { label: '待确认', color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200', icon: Clock },
+                            in_store: { label: '已入库', color: 'text-gray-500', bg: 'bg-gray-100', border: 'border-gray-200', icon: CheckCircle },
+                            invalid: { label: '格式异常', color: 'text-red-500', bg: 'bg-red-50', border: 'border-red-200', icon: XCircle },
+                          };
+                          const config = statusConfig[item.status];
+                          const Icon = config.icon;
+                          return (
+                            <div key={i} className={`flex items-center gap-2 p-1.5 rounded-sm border ${config.bg} ${config.border}`}>
+                              <Icon className={`w-3.5 h-3.5 shrink-0 ${config.color}`} />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-medium text-gray-700 truncate">
+                                  {item.reportTitle || item.url}
+                                </p>
+                                <p className="text-[10px] text-gray-400 truncate font-mono">{item.url}</p>
+                              </div>
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-sm shrink-0 ${config.color} ${config.bg} border ${config.border}`}>
+                                {config.label}
+                              </span>
+                              {item.status === 'in_store' && item.reportId && (
+                                <button
+                                  onClick={() => scrollToReport(item.reportId!)}
+                                  className="text-[10px] text-navy-600 hover:underline shrink-0"
+                                >
+                                  查看 →
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

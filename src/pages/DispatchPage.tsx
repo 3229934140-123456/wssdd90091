@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, Clock, MessageSquare, Users, Plus, Send, Phone, Mail, Edit3, Save, ChevronRight, Check, X, AlertOctagon, Zap, AlertCircle, FileText, XCircle, Target, UserPlus, ClipboardList, Filter } from 'lucide-react';
+import { AlertTriangle, Clock, MessageSquare, Users, Plus, Send, Phone, Mail, Edit3, Save, ChevronRight, Check, X, AlertOctagon, Zap, AlertCircle, FileText, XCircle, Target, UserPlus, ClipboardList, Filter, Copy, Download } from 'lucide-react';
 import { useSentimentStore } from '../store/sentimentStore';
 import type { DispatchRecord, DispatchStatus, EscalationLevel, ContactCommStatus, RelationshipLevel, EventPriority } from '../../shared/types';
 import { PRIORITY_CONFIG, DISPATCH_STATUS_CONFIG, ESCALATION_CONFIG, COMM_STATUS_CONFIG, RELATIONSHIP_CONFIG, formatFullDateTime, getTimeAgo } from '../../shared/constants';
@@ -160,6 +160,67 @@ export default function DispatchPage() {
     if (minutesFilter === 'escalation') return item.needsEscalation;
     return true;
   });
+
+  const generateMinutesText = (): string => {
+    const today = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+    let text = `【晨会舆情研判纪要】${today}\n`;
+    text += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    text += `📊 今日重点事件：${filteredMinutes.length} 个\n\n`;
+
+    filteredMinutes.forEach((item, idx) => {
+      const priorityLabel = PRIORITY_CONFIG[item.priority].label;
+      const statusLabel = item.dispatchStatus ? DISPATCH_STATUS_CONFIG[item.dispatchStatus].label : '未启动';
+
+      text += `【${idx + 1}】${item.eventName}\n`;
+      text += `    优先级：${priorityLabel} | 处置状态：${statusLabel}\n`;
+      text += `    报道数：${item.reportCount}篇 | 负面/风险：${item.negativeRiskCount}条\n`;
+
+      if (item.escalationReasons.length > 0) {
+        text += `    ⚠️ 升级原因：${item.escalationReasons.join('、')}\n`;
+      }
+
+      if (item.allContacts.length > 0) {
+        text += `    👥 约访/联系人：\n`;
+        item.allContacts.forEach(c => {
+          const targetMark = c.isTarget ? ' 🎯目标' : '';
+          const statusLabel = COMM_STATUS_CONFIG[c.commStatus].label;
+          text += `       • ${c.name}（${c.media}）${targetMark} - ${statusLabel}\n`;
+        });
+      }
+
+      const needs = [];
+      if (item.needsEscalation) needs.push('需升级');
+      if (item.needsStatement) needs.push('需声明');
+      if (item.needsInterview) needs.push('需约访');
+      if (needs.length > 0) {
+        text += `    🔔 处置需求：${needs.join('、')}\n`;
+      }
+
+      text += `    ⚡ 下一步：${item.nextAction}\n`;
+      text += `\n`;
+    });
+
+    text += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `（本纪要由舆情研判台自动生成）`;
+
+    return text;
+  };
+
+  const copyMinutesToClipboard = async () => {
+    const text = generateMinutesText();
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('晨会纪要已复制到剪贴板，可直接粘贴到会议文档中');
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      alert('晨会纪要已复制到剪贴板');
+    }
+  };
 
   const ensureDispatch = (): DispatchRecord => {
     if (selectedDispatch) return selectedDispatch;
@@ -431,7 +492,16 @@ export default function DispatchPage() {
             <ClipboardList className="w-5 h-5 text-navy-700" strokeWidth={1.8} />
             <h2 className="text-sm font-semibold text-gray-800">晨会纪要 · 高优先级事件汇总</h2>
             <span className="text-xs text-gray-500 font-mono">{filteredMinutes.length} 个事件</span>
-            <div className="ml-auto flex items-center gap-1">
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={copyMinutesToClipboard}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 rounded-sm transition-colors"
+                title="复制为文本格式，可粘贴到会议文档"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                复制纪要
+              </button>
+              <div className="w-px h-4 bg-gray-200" />
               <Filter className="w-3.5 h-3.5 text-gray-400" />
               {([
                 { key: 'all' as MinutesFilter, label: '全部' },
@@ -588,9 +658,19 @@ export default function DispatchPage() {
                         <p className="text-xs text-gray-500">{selectedEvent.description}</p>
                       )}
                     </div>
-                    <button onClick={() => navigate('/analysis')} className="btn-ghost text-xs">
-                      查看时间线 <ChevronRight className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {viewMode === 'board' && (
+                        <button
+                          onClick={() => setViewMode('minutes')}
+                          className="btn-ghost text-xs"
+                        >
+                          ← 返回纪要
+                        </button>
+                      )}
+                      <button onClick={() => navigate('/analysis')} className="btn-ghost text-xs">
+                        查看时间线 <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   {(selectedEvent.escalationReasons?.length || 0) > 0 && (
