@@ -121,8 +121,11 @@ interface SentimentStore {
   updateEventPriority: (eventId: string, priority: EventPriority) => void;
   addEscalationReason: (eventId: string, reason: string) => void;
   syncEventFromReports: (eventId: string) => void;
+  addEvent: (name: string, description?: string) => string;
+  addReportToEvent: (eventId: string, reportId: string) => void;
 
   findReportByUrl: (url: string) => Report | undefined;
+  findPendingReportByUrl: (url: string) => boolean;
 
   resetToMockData: () => void;
 
@@ -339,6 +342,37 @@ export const useSentimentStore = create<SentimentStore>((set, get) => {
       })
     })),
 
+    addEvent: (name, description) => {
+      const id = generateId();
+      persistedSet((state: any) => ({
+        events: [...state.events, {
+          id,
+          name,
+          reports: [],
+          firstReportTime: new Date().toISOString(),
+          latestReportTime: new Date().toISOString(),
+          sentimentShift: false,
+          priority: 'medium' as EventPriority,
+          description: description || '',
+          escalationReasons: []
+        }]
+      }));
+      return id;
+    },
+
+    addReportToEvent: (eventId, reportId) => persistedSet((state: any) => ({
+      events: state.events.map((e: MediaEvent) => {
+        if (e.id !== eventId) return e;
+        if (e.reports.includes(reportId)) return e;
+        return {
+          ...e,
+          reports: [...e.reports, reportId],
+          latestReportTime: new Date().toISOString()
+        };
+      }),
+      reports: state.reports.map((r: Report) => r.id === reportId ? { ...r, eventId } : r)
+    })),
+
     syncEventFromReports: (eventId) => {
       const state = get();
       const event = state.events.find((e: MediaEvent) => e.id === eventId);
@@ -392,6 +426,11 @@ export const useSentimentStore = create<SentimentStore>((set, get) => {
     findReportByUrl: (url) => {
       const normalizedUrl = url.trim().replace(/\/+$/, '');
       return get().reports.find(r => r.url && r.url.trim().replace(/\/+$/, '') === normalizedUrl);
+    },
+
+    findPendingReportByUrl: (url) => {
+      const normalizedUrl = url.trim().replace(/\/+$/, '');
+      return get().reports.some(r => r.url && r.url.trim().replace(/\/+$/, '') === normalizedUrl);
     },
 
     resetToMockData: () => {

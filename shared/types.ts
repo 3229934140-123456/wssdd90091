@@ -106,4 +106,5 @@ export interface PendingReport {
   fileName?: string;
   fileSize?: number;
   recognizedText?: string;
+  eventId?: string;
 }

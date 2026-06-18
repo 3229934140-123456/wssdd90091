@@ -1,10 +1,10 @@
 import { useState, useRef, ChangeEvent } from 'react';
-import { Link, Upload, List, FileUp, Sparkles, Filter, TrendingUp, AlertTriangle, HelpCircle, ShieldAlert, CheckCircle2, FileText, CheckCircle, XCircle, AlertCircle, Edit3, Save, X, ChevronDown, ChevronUp, Eye } from 'lucide-react';
+import { Link, Upload, List, FileUp, Sparkles, Filter, TrendingUp, AlertTriangle, HelpCircle, ShieldAlert, CheckCircle2, FileText, CheckCircle, XCircle, AlertCircle, Edit3, Save, X, ChevronDown, ChevronUp, Eye, Plus, FolderOpen } from 'lucide-react';
 import ReportCard from '../components/ReportCard';
 import { useSentimentStore } from '../store/sentimentStore';
 import { analyzeReport, analyzeUrlReport, analyzeFile, FileImportResult } from '../utils/analyzer';
 import { SENTIMENT_CONFIG, MEDIA_LEVEL_CONFIG, REACH_SCOPE_CONFIG } from '../../shared/constants';
-import type { SentimentType, MediaLevel, ReachScope, PendingReport } from '../../shared/types';
+import type { SentimentType, MediaLevel, ReachScope, PendingReport, Report } from '../../shared/types';
 
 type ImportTab = 'url' | 'file' | 'batch';
 
@@ -15,19 +15,21 @@ const tabs: { key: ImportTab; label: string; icon: typeof Link; desc: string }[]
 ];
 
 const sentimentOptions: SentimentType[] = ['positive', 'neutral', 'doubtful', 'negative', 'risk'];
-const mediaLevelOptions: MediaLevel[] = ['national', 'finance', 'portal', 'selfmedia', 'industry'];
-const reachScopeOptions: ReachScope[] = ['local', 'regional', 'national', 'viral'];
 
 function PendingReportCard({
   report,
   onUpdate,
   onRemove,
-  index
+  index,
+  events,
+  onNewEvent,
 }: {
   report: PendingReport;
   onUpdate: (tempId: string, updates: Partial<PendingReport>) => void;
   onRemove: (tempId: string) => void;
   index: number;
+  events: { id: string; name: string }[];
+  onNewEvent: (tempId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -116,6 +118,26 @@ function PendingReportCard({
                   <XCircle className="w-3.5 h-3.5" />
                 </button>
               </div>
+            </div>
+
+            <div className="mt-2 flex items-center gap-2">
+              <FolderOpen className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+              <select
+                value={report.eventId || ''}
+                onChange={e => onUpdate(report.tempId, { eventId: e.target.value || undefined })}
+                className="text-xs px-2 py-1 border border-gray-200 rounded-sm bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-navy-500 flex-1"
+              >
+                <option value="">未关联事件</option>
+                {events.map(e => (
+                  <option key={e.id} value={e.id}>{e.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => onNewEvent(report.tempId)}
+                className="inline-flex items-center gap-1 px-2 py-1 text-xs border border-dashed border-navy-300 text-navy-600 hover:bg-navy-50 rounded-sm transition-colors shrink-0"
+              >
+                <Plus className="w-3 h-3" />新建
+              </button>
             </div>
 
             {editing && (
@@ -226,13 +248,22 @@ export default function ImportPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [pendingReports, setPendingReports] = useState<PendingReport[]>([]);
   const [duplicateWarnings, setDuplicateWarnings] = useState<{ url: string; reportId: string; title: string }[]>([]);
+  const [importAreaWarnings, setImportAreaWarnings] = useState<{ url: string; reportId: string; title: string }[]>([]);
   const [fileAnalyzeProgress, setFileAnalyzeProgress] = useState<number>(0);
+  const [showNewEventDialog, setShowNewEventDialog] = useState<string | null>(null);
+  const [newEventName, setNewEventName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const reports = useSentimentStore(s => s.reports);
+  const events = useSentimentStore(s => s.events);
   const addReport = useSentimentStore(s => s.addReport);
   const addReports = useSentimentStore(s => s.addReports);
   const findReportByUrl = useSentimentStore(s => s.findReportByUrl);
+  const addEvent = useSentimentStore(s => s.addEvent);
+  const addReportToEvent = useSentimentStore(s => s.addReportToEvent);
+  const syncEventFromReports = useSentimentStore(s => s.syncEventFromReports);
   const setSelectedReport = useSentimentStore(s => s.setSelectedReport);
+
+  const eventOptions = events.map(e => ({ id: e.id, name: e.name }));
 
   const sortedReports = [...reports].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const filteredReports = filterSentiment === 'all' ? sortedReports : sortedReports.filter(r => r.sentiment === filterSentiment);
@@ -246,6 +277,15 @@ export default function ImportPage() {
     risk: reports.filter(r => r.sentiment === 'risk').length,
   };
 
+  const normalizeUrl = (url: string) => url.trim().replace(/\/+$/, '');
+
+  const checkUrlDuplicate = (url: string): { inStore: Report | undefined; inPending: boolean } => {
+    const normalized = normalizeUrl(url);
+    const inStore = reports.find(r => r.url && normalizeUrl(r.url) === normalized);
+    const inPending = pendingReports.some(p => p.url && normalizeUrl(p.url) === normalized);
+    return { inStore, inPending };
+  };
+
   const handleUrlImport = () => {
     if (!urlInput.trim()) return;
     setIsAnalyzing(true);
@@ -253,12 +293,17 @@ export default function ImportPage() {
       const urls = urlInput.split(/\n+/).filter(u => u.trim());
       const newPending: PendingReport[] = [];
       const warnings: { url: string; reportId: string; title: string }[] = [];
+      const importWarnings: { url: string; reportId: string; title: string }[] = [];
 
       for (const rawUrl of urls) {
         const url = rawUrl.trim();
-        const existing = findReportByUrl(url);
-        if (existing) {
-          warnings.push({ url, reportId: existing.id, title: existing.title });
+        const { inStore, inPending } = checkUrlDuplicate(url);
+        if (inStore) {
+          const w = { url, reportId: inStore.id, title: inStore.title };
+          warnings.push(w);
+          importWarnings.push(w);
+        } else if (inPending) {
+          importWarnings.push({ url, reportId: '', title: '已在待确认列表中' });
         } else {
           newPending.push(analyzeUrlReport(url));
         }
@@ -266,6 +311,7 @@ export default function ImportPage() {
 
       setPendingReports(prev => [...prev, ...newPending]);
       setDuplicateWarnings(warnings);
+      setImportAreaWarnings(importWarnings);
       setUrlInput('');
       setIsAnalyzing(false);
     }, 800);
@@ -325,16 +371,54 @@ export default function ImportPage() {
     setPendingReports(prev => prev.filter(r => r.tempId !== tempId));
   };
 
+  const handleNewEventForPending = (tempId: string) => {
+    setShowNewEventDialog(tempId);
+    setNewEventName('');
+  };
+
+  const confirmNewEvent = () => {
+    if (!showNewEventDialog || !newEventName.trim()) return;
+    const eventId = addEvent(newEventName.trim());
+    updatePendingReport(showNewEventDialog, { eventId });
+    setShowNewEventDialog(null);
+    setNewEventName('');
+  };
+
   const confirmPendingReports = () => {
-    const reportsToConfirm = pendingReports.map(({ tempId, fileName, fileSize, recognizedText, ...rest }) => rest);
-    addReports(reportsToConfirm);
+    if (pendingReports.length === 0) return;
+
+    const reportsWithEvent = pendingReports.map(({ tempId, fileName, fileSize, recognizedText, ...rest }) => rest);
+    addReports(reportsWithEvent);
+
+    const affectedEventIds = new Set<string>();
+    const state = useSentimentStore.getState();
+    const allReports = state.reports;
+
+    setTimeout(() => {
+      const latestReports = useSentimentStore.getState().reports;
+      const newlyAdded = latestReports.slice(-pendingReports.length);
+
+      pendingReports.forEach((pending, i) => {
+        if (pending.eventId && newlyAdded[i]) {
+          addReportToEvent(pending.eventId, newlyAdded[i].id);
+          affectedEventIds.add(pending.eventId);
+        }
+      });
+
+      affectedEventIds.forEach(eventId => {
+        syncEventFromReports(eventId);
+      });
+    }, 50);
+
     setPendingReports([]);
     setDuplicateWarnings([]);
+    setImportAreaWarnings([]);
   };
 
   const clearPendingReports = () => {
     setPendingReports([]);
     setDuplicateWarnings([]);
+    setImportAreaWarnings([]);
   };
 
   const scrollToReport = (reportId: string) => {
@@ -345,12 +429,6 @@ export default function ImportPage() {
       el.classList.add('animate-pulse-border');
       setTimeout(() => el.classList.remove('animate-pulse-border'), 3000);
     }
-  };
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
   const filterOptions: { key: SentimentType | 'all'; label: string; icon?: typeof Filter }[] = [
@@ -430,9 +508,11 @@ export default function ImportPage() {
                   <div key={i} className="flex items-center gap-2 text-xs">
                     <span className="text-amber-700 font-medium">{w.title}</span>
                     <span className="text-gray-400 truncate max-w-[200px]">{w.url}</span>
-                    <button onClick={() => scrollToReport(w.reportId)} className="text-navy-600 hover:underline shrink-0">
-                      定位到原记录 →
-                    </button>
+                    {w.reportId && (
+                      <button onClick={() => scrollToReport(w.reportId)} className="text-navy-600 hover:underline shrink-0">
+                        定位到原记录 →
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -447,8 +527,33 @@ export default function ImportPage() {
                 index={idx}
                 onUpdate={updatePendingReport}
                 onRemove={removePendingReport}
+                events={eventOptions}
+                onNewEvent={handleNewEventForPending}
               />
             ))}
+          </div>
+        </div>
+      )}
+
+      {showNewEventDialog && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setShowNewEventDialog(null)}>
+          <div className="bg-white rounded-lg p-5 w-96 shadow-xl animate-fade-in" onClick={e => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-gray-800 mb-3">新建事件</h3>
+            <input
+              type="text"
+              value={newEventName}
+              onChange={e => setNewEventName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && confirmNewEvent()}
+              placeholder="输入事件名称..."
+              className="input-field text-sm mb-4"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowNewEventDialog(null)} className="btn-ghost text-xs py-1 px-3">取消</button>
+              <button onClick={confirmNewEvent} disabled={!newEventName.trim()} className="btn-primary text-xs py-1 px-3 disabled:opacity-50">
+                <Plus className="w-3 h-3 mr-1" />创建并关联
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -485,11 +590,34 @@ export default function ImportPage() {
                   <label className="block text-xs font-medium text-gray-600 mb-2">新闻链接</label>
                   <textarea
                     value={urlInput}
-                    onChange={(e) => setUrlInput(e.target.value)}
+                    onChange={(e) => { setUrlInput(e.target.value); setImportAreaWarnings([]); }}
                     placeholder="粘贴新闻URL，支持一行一条批量导入..."
                     rows={5}
                     className="textarea-field font-mono text-xs"
                   />
+
+                  {importAreaWarnings.length > 0 && (
+                    <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-sm">
+                      <p className="text-xs font-semibold text-amber-700 mb-1.5 flex items-center gap-1">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        重复链接检测
+                      </p>
+                      <div className="space-y-1">
+                        {importAreaWarnings.map((w, i) => (
+                          <div key={i} className="flex items-center gap-2 text-xs">
+                            <span className="text-amber-700">{w.reportId ? w.title : '已在待确认列表中'}</span>
+                            <span className="text-gray-400 truncate max-w-[150px]">{w.url}</span>
+                            {w.reportId && (
+                              <button onClick={() => scrollToReport(w.reportId)} className="text-navy-600 hover:underline shrink-0">
+                                查看原报道 →
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="mt-3 flex items-center justify-between">
                     <p className="text-xs text-gray-400">
                       {urlInput ? `已输入 ${urlInput.split(/\n+/).filter(u => u.trim()).length} 条链接` : '示例：https://finance.sina.com.cn/...'}
