@@ -39,6 +39,19 @@ export default function ReportCard({ report, index }: ReportCardProps) {
   const SourceIcon = sourceIcons[report.source];
   const changed = report.sentiment !== report.originalSentiment;
 
+  const getSourceDetail = () => {
+    if (report.source === 'url' && report.url) {
+      return report.url;
+    }
+    if (report.source === 'file' && report.content) {
+      const match = report.content.match(/【OCR识别自文件：([^】]+)】/);
+      if (match) return match[1];
+    }
+    return null;
+  };
+
+  const sourceDetail = getSourceDetail();
+
   const highlightContent = (text: string) => {
     let result = text;
     const sortedSentences = [...report.keySentences].sort((a, b) => b.position - a.position);
@@ -84,6 +97,17 @@ export default function ReportCard({ report, index }: ReportCardProps) {
                   <MediaLevelBadge level={report.mediaLevel} />
                   <span className="font-mono">{formatDateTime(report.publishTime)}</span>
                   <span>· {sourceLabels[report.source]}</span>
+                  {sourceDetail && (
+                    <span className="inline-flex items-center gap-1 max-w-[200px] truncate text-navy-600" title={sourceDetail}>
+                      {report.source === 'url' ? (
+                        <a href={report.url} target="_blank" rel="noopener noreferrer" className="hover:underline truncate">
+                          {sourceDetail.length > 40 ? sourceDetail.slice(0, 40) + '...' : sourceDetail}
+                        </a>
+                      ) : (
+                        <span className="truncate italic">📄 {sourceDetail}</span>
+                      )}
+                    </span>
+                  )}
                   {changed && (
                     <span className="inline-flex items-center gap-1 text-amber-600">
                       <AlertCircle className="w-3 h-3" />

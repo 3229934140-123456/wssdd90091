@@ -1,8 +1,8 @@
-import { useState } from 'react';
-import { Link, Upload, List, FileUp, Sparkles, Filter, TrendingUp, AlertTriangle, HelpCircle, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { useState, useRef, ChangeEvent } from 'react';
+import { Link, Upload, List, FileUp, Sparkles, Filter, TrendingUp, AlertTriangle, HelpCircle, ShieldAlert, CheckCircle2, FileText, CheckCircle, XCircle } from 'lucide-react';
 import ReportCard from '../components/ReportCard';
 import { useSentimentStore } from '../store/sentimentStore';
-import { analyzeReport, analyzeUrlReport } from '../utils/analyzer';
+import { analyzeReport, analyzeUrlReport, analyzeFile, FileImportResult } from '../utils/analyzer';
 import { SENTIMENT_CONFIG } from '../../shared/constants';
 import type { SentimentType } from '../../shared/types';
 
@@ -20,6 +20,9 @@ export default function ImportPage() {
   const [batchInput, setBatchInput] = useState('');
   const [filterSentiment, setFilterSentiment] = useState<SentimentType | 'all'>('all');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<FileImportResult[]>([]);
+  const [fileAnalyzeProgress, setFileAnalyzeProgress] = useState<number>(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const reports = useSentimentStore(s => s.reports);
   const addReport = useSentimentStore(s => s.addReport);
   const addReports = useSentimentStore(s => s.addReports);
@@ -64,16 +67,58 @@ export default function ImportPage() {
     }, 800);
   };
 
+  const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsAnalyzing(true);
+    setSelectedFiles([]);
+    setFileAnalyzeProgress(0);
+
+    const results: FileImportResult[] = [];
+    const fileArray = Array.from(files);
+
+    for (let i = 0; i < fileArray.length; i++) {
+      const file = fileArray[i];
+      try {
+        const result = await analyzeFile(file);
+        results.push(result);
+      } catch (err) {
+        console.error('File analysis failed:', err);
+      }
+      setFileAnalyzeProgress(Math.round(((i + 1) / fileArray.length) * 100));
+    }
+
+    setSelectedFiles(results);
+    setIsAnalyzing(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const handleFileImport = () => {
+    if (selectedFiles.length === 0) {
+      fileInputRef.current?.click();
+      return;
+    }
     setIsAnalyzing(true);
     setTimeout(() => {
-      const samples = [
-        analyzeReport('某公司财报超预期，营收同比增长35%', '根据最新发布的2026年Q2财报，该公司营收同比增长35%，净利润增长42%，均超出市场预期。管理层表示对全年业绩保持乐观态度。', '财经日报'),
-        analyzeReport('产品质量问题频发，消费者维权艰难', '近期多位消费者反映购买的产品存在严重质量问题，多次联系售后仍未得到妥善处理。目前已有超过200名消费者加入维权群。', '消费者报道'),
-      ];
-      addReports(samples);
+      const newReports = selectedFiles.map(f => f.report);
+      addReports(newReports);
+      setSelectedFiles([]);
+      setFileAnalyzeProgress(0);
       setIsAnalyzing(false);
-    }, 1500);
+    }, 500);
+  };
+
+  const removeSelectedFile = (idx: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
   const filterOptions: { key: SentimentType | 'all'; label: string; icon?: typeof Filter }[] = [
@@ -178,23 +223,83 @@ export default function ImportPage() {
 
               {activeTab === 'file' && (
                 <div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept=".pdf,.jpg,.jpeg,.png,.gif,.bmp"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
                   <div
-                    onClick={handleFileImport}
+                    onClick={() => fileInputRef.current?.click()}
                     className="border-2 border-dashed border-gray-200 rounded-sm p-8 text-center cursor-pointer hover:border-navy-400 hover:bg-navy-50/30 transition-colors"
                   >
                     <div className="w-12 h-12 mx-auto mb-3 bg-gray-100 rounded-full flex items-center justify-center">
                       <FileUp className="w-6 h-6 text-gray-400" />
                     </div>
                     <p className="text-sm font-medium text-gray-700 mb-1">点击选择文件或拖拽至此处</p>
-                    <p className="text-xs text-gray-400">支持 PDF、JPG、PNG 格式，单个文件不超过 10MB</p>
+                    <p className="text-xs text-gray-400">支持 PDF、JPG、PNG 格式，单个文件不超过 10MB，可多选</p>
                   </div>
-                  <div className="mt-3 flex justify-end">
+
+                  {isAnalyzing && fileAnalyzeProgress > 0 && (
+                    <div className="mt-4">
+                      <div className="flex items-center justify-between text-xs text-gray-500 mb-1.5">
+                        <span>OCR 识别分析中...</span>
+                        <span>{fileAnalyzeProgress}%</span>
+                      </div>
+                      <div className="w-full bg-gray-100 rounded-sm h-1.5 overflow-hidden">
+                        <div
+                          className="h-full bg-navy-600 transition-all duration-300"
+                          style={{ width: `${fileAnalyzeProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedFiles.length > 0 && (
+                    <div className="mt-4 space-y-2 max-h-48 overflow-y-auto">
+                      {selectedFiles.map((file, idx) => {
+                        const config = SENTIMENT_CONFIG[file.report.sentiment];
+                        return (
+                          <div key={idx} className="flex items-center gap-3 p-3 bg-gray-50 border border-gray-100 rounded-sm">
+                            <div className="w-8 h-8 bg-white border border-gray-200 rounded-sm flex items-center justify-center shrink-0">
+                              <FileText className="w-4 h-4 text-navy-600" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-800 truncate">{file.fileName}</p>
+                              <p className="text-xs text-gray-500">
+                                {formatFileSize(file.fileSize)} · {file.report.mediaName}
+                              </p>
+                            </div>
+                            <span
+                              className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-sm"
+                              style={{ backgroundColor: `${config.color}14`, color: config.color }}
+                            >
+                              {config.label}
+                            </span>
+                            <button
+                              onClick={() => removeSelectedFile(idx)}
+                              className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-sm transition-colors"
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="mt-4 flex items-center justify-between">
+                    <p className="text-xs text-gray-400">
+                      {selectedFiles.length > 0 ? `已选择 ${selectedFiles.length} 个文件，OCR 识别完成` : '选择文件后将自动进行OCR识别和倾向分析'}
+                    </p>
                     <button
                       onClick={handleFileImport}
                       disabled={isAnalyzing}
                       className="btn-primary disabled:opacity-50"
                     >
-                      {isAnalyzing ? 'OCR识别分析中...' : '模拟导入示例剪报'}
+                      {isAnalyzing ? '识别分析中...' : selectedFiles.length > 0 ? `导入 ${selectedFiles.length} 条报道` : '选择文件'}
                     </button>
                   </div>
                 </div>

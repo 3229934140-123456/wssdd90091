@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, Clock, MessageSquare, Users, Plus, Send, Phone, Mail, Edit3, Save, ChevronRight, Check, X, AlertOctagon, Zap, AlertCircle, FileText } from 'lucide-react';
+import { AlertTriangle, Clock, MessageSquare, Users, Plus, Send, Phone, Mail, Edit3, Save, ChevronRight, Check, X, AlertOctagon, Zap, AlertCircle, FileText, XCircle } from 'lucide-react';
 import { useSentimentStore } from '../store/sentimentStore';
 import type { DispatchRecord, DispatchStatus, EscalationLevel } from '../../shared/types';
 import { PRIORITY_CONFIG, DISPATCH_STATUS_CONFIG, ESCALATION_CONFIG, formatFullDateTime, getTimeAgo } from '../../shared/constants';
@@ -33,6 +33,8 @@ export default function DispatchPage() {
   const updateDispatchStatement = useSentimentStore(s => s.updateDispatchStatement);
   const addFollowUpNote = useSentimentStore(s => s.addFollowUpNote);
   const updateDispatchEscalation = useSentimentStore(s => s.updateDispatchEscalation);
+  const bindContactToDispatch = useSentimentStore(s => s.bindContactToDispatch);
+  const unbindContactFromDispatch = useSentimentStore(s => s.unbindContactFromDispatch);
 
   const navigate = useNavigate();
   const [selectedEventId, setSelectedEventId] = useState<string>(events.find(e => e.priority === 'critical')?.id || events[0]?.id);
@@ -109,7 +111,22 @@ export default function DispatchPage() {
     updateDispatchEscalation(d.id, level);
   };
 
+  const handleBindContact = (contactId: string) => {
+    const d = ensureDispatch();
+    bindContactToDispatch(d.id, contactId);
+  };
+
+  const handleUnbindContact = (contactId: string) => {
+    if (!selectedDispatch) return;
+    unbindContactFromDispatch(selectedDispatch.id, contactId);
+  };
+
+  const isContactBound = (contactId: string): boolean => {
+    return selectedDispatch?.contacts.includes(contactId) || false;
+  };
+
   const linkedContacts = selectedDispatch?.contacts.map(id => getContactById(id)).filter(Boolean) || [];
+  const unboundContacts = contacts.filter(c => !isContactBound(c.id));
 
   return (
     <div className="p-6">
@@ -185,30 +202,55 @@ export default function DispatchPage() {
             <h2 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
               <Users className="w-4 h-4" strokeWidth={1.8} />
               媒体联系人
+              {selectedDispatch && selectedDispatch.contacts.length > 0 && (
+                <span className="ml-auto inline-flex items-center px-2 py-0.5 text-xs font-medium bg-navy-100 text-navy-700 rounded-sm">
+                  已绑定 {selectedDispatch.contacts.length}
+                </span>
+              )}
             </h2>
             <div className="space-y-2 mb-3 max-h-60 overflow-y-auto">
-              {contacts.map(c => (
-                <div key={c.id} className="flex items-center gap-3 p-2.5 rounded-sm hover:bg-gray-50 transition-colors">
-                  <div className="w-9 h-9 rounded-sm bg-navy-50 flex items-center justify-center text-navy-700 font-medium text-sm shrink-0">
-                    {c.name[0]}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-800">{c.name}</span>
-                      <RelationshipBadge relationship={c.relationship} />
+              {contacts.map(c => {
+                const bound = isContactBound(c.id);
+                return (
+                  <div
+                    key={c.id}
+                    className={`flex items-center gap-3 p-2.5 rounded-sm transition-colors ${bound ? 'bg-navy-50 border border-navy-200' : 'hover:bg-gray-50'}`}
+                  >
+                    <div className={`w-9 h-9 rounded-sm flex items-center justify-center font-medium text-sm shrink-0 ${bound ? 'bg-navy-600 text-white' : 'bg-navy-50 text-navy-700'}`}>
+                      {c.name[0]}
                     </div>
-                    <p className="text-xs text-gray-500 truncate">{c.media} · {c.title}</p>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-gray-800">{c.name}</span>
+                        <RelationshipBadge relationship={c.relationship} />
+                      </div>
+                      <p className="text-xs text-gray-500 truncate">{c.media} · {c.title}</p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (bound) {
+                            handleUnbindContact(c.id);
+                          } else {
+                            handleBindContact(c.id);
+                          }
+                        }}
+                        className={`p-1.5 rounded-sm transition-colors ${bound ? 'text-red-500 hover:bg-red-100' : 'text-emerald-500 hover:bg-emerald-100'}`}
+                        title={bound ? '解绑' : '绑定到此事件'}
+                      >
+                        {bound ? <XCircle className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
+                      </button>
+                      <a href={`tel:${c.phone}`} className="p-1.5 text-gray-400 hover:text-navy-600 hover:bg-gray-100 rounded-sm transition-colors">
+                        <Phone className="w-3.5 h-3.5" />
+                      </a>
+                      <a href={`mailto:${c.email}`} className="p-1.5 text-gray-400 hover:text-navy-600 hover:bg-gray-100 rounded-sm transition-colors">
+                        <Mail className="w-3.5 h-3.5" />
+                      </a>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <a href={`tel:${c.phone}`} className="p-1.5 text-gray-400 hover:text-navy-600 hover:bg-gray-100 rounded-sm transition-colors">
-                      <Phone className="w-3.5 h-3.5" />
-                    </a>
-                    <a href={`mailto:${c.email}`} className="p-1.5 text-gray-400 hover:text-navy-600 hover:bg-gray-100 rounded-sm transition-colors">
-                      <Mail className="w-3.5 h-3.5" />
-                    </a>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             <button className="w-full btn-secondary text-xs py-1.5">
               <Plus className="w-3.5 h-3.5 mr-1" />
@@ -239,6 +281,49 @@ export default function DispatchPage() {
                     <ChevronRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
+
+                {linkedContacts.length > 0 && (
+                  <div className="mb-5 p-3 bg-emerald-50 border border-emerald-100 rounded-sm">
+                    <p className="text-xs font-semibold text-emerald-700 mb-2 flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5" />
+                      本次处置需联络的联系人 ({linkedContacts.length})
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {linkedContacts.map(c => c && (
+                        <div key={c.id} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-emerald-200 rounded-sm">
+                          <span className="w-5 h-5 bg-emerald-500 text-white text-xs rounded-sm flex items-center justify-center font-medium">{c.name[0]}</span>
+                          <span className="text-xs font-medium text-gray-700">{c.name}</span>
+                          <span className="text-[10px] text-gray-400">· {c.media}</span>
+                          <button
+                            onClick={() => handleUnbindContact(c.id)}
+                            className="ml-0.5 p-0.5 text-gray-400 hover:text-red-500 transition-colors"
+                            title="移除"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {unboundContacts.length > 0 && (
+                  <div className="mb-5">
+                    <label className="block text-xs font-medium text-gray-600 mb-2">快速绑定联系人</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {unboundContacts.slice(0, 6).map(c => (
+                        <button
+                          key={c.id}
+                          onClick={() => handleBindContact(c.id)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-gray-50 border border-gray-200 text-gray-600 hover:bg-navy-50 hover:border-navy-200 hover:text-navy-700 rounded-sm transition-colors"
+                        >
+                          <Plus className="w-3 h-3" />
+                          {c.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-4 gap-3 mb-5">
                   {[
